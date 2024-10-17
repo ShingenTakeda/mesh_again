@@ -20,8 +20,6 @@
 #include "esp_event.h"
 #include "driver/uart.h"
 #include "esp_system.h"
-
-#include "mpack/mpack.h"
 #include <stdbool.h>
 
 #include "utils.h"
@@ -36,15 +34,15 @@
 #define MESH_AP_PASS "mesh_password"
 
 static uint8_t MESH_ID[6] = { 0x12, 0x34, 0x56, 0x78, 0x90, 0x91 }; // endereço MAC da rede mesh (mesh ID)
-static const char *DEBUG_TAG_Main = "Debug Main";
+//static const char *DEBUG_TAG_Main = "Debug Main";
 
 static bool is_mesh_connected = false;
 static mesh_addr_t mesh_parent_addr;
 static int mesh_layer = -1;
 static esp_netif_t *netif_sta = NULL;
 
-#define RX_BUF_SIZE 256
-#define TX_BUF_SIZE 128
+//#define RX_BUF_SIZE 256
+//#define TX_BUF_SIZE 128
 
 //WiFi router credentials size
 #define MAX_SSID_LEN 32  // Comprimento máximo do SSID

@@ -45,8 +45,8 @@
  *******************************************************/
 static const char *TAG = "MESH_NETWORK";
 static const char *NET_TAG = "NET";
-static uint8_t tx_buf[BUFF_SIZE] = { 0 };
-static uint8_t rx_buf[BUFF_SIZE] = { 0 };
+//static uint8_t tx_buf[BUFF_SIZE] = { 0 };
+//static uint8_t rx_buf[BUFF_SIZE] = { 0 };
 static bool is_mesh_connected = false;
 static int mesh_layer = -1;
 static esp_netif_t *netif_sta = NULL;
@@ -58,22 +58,22 @@ extern QueueHandle_t send_message_mesh_q;
 QueueHandle_t rcv_message_mesh_q;
 
 //TODO:Chaange how the UART works and make sure that you can use this
-extern QueueHandle_t uart_send_queue;
+// extern QueueHandle_t uart_send_queue;
 
 //TODO: Just to test tcp/ip tasks
-extern QueueHandle_t net_q;
+// extern QueueHandle_t net_q;
 
 TaskHandle_t mesh_send_t_handle;
 TaskHandle_t mesh_rcv_t_handle;
 
-TaskHandle_t net_send_t_handle;
+// TaskHandle_t net_send_t_handle;
 TaskHandle_t net_rcv_t_handle;
 
 //node_addr é o endereço relacionado ao WiFi no modo estação 'STA_MAC_address'
 //parent_addr do ponto de vista de um node, é o WiFi do pai como ponto de acesso a malha 'AP_MESH_address'
 //onde o endereço mac do modo AP é 1 unidade maior do que o mac no modo STA
-static mesh_addr_t ROOT_AP_MESH_address;
-static mesh_addr_t ROOT_STA_MESH_address;
+// static mesh_addr_t ROOT_AP_MESH_address;
+// static mesh_addr_t ROOT_STA_MESH_address;
 static mesh_addr_t PARENT_AP_MESH_address;
 static mesh_addr_t PARENT_STA_MESH_address;
 extern uint8_t STA_MAC_address[6];
@@ -85,6 +85,36 @@ extern uint8_t STA_MAC_address[6];
 /*******************************************************
  *                Function Definitions
  *******************************************************/
+void do_retransmit(const int sock)
+{
+    int len;
+    char rx_buffer[128];
+
+    do {
+        len = recv(sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
+        if (len < 0) {
+            ESP_LOGE(TAG, "Error occurred during receiving: errno %d", errno);
+        } else if (len == 0) {
+            ESP_LOGW(TAG, "Connection closed");
+        } else {
+            rx_buffer[len] = 0; // Null-terminate whatever is received and treat it like a string
+            ESP_LOGI(TAG, "Received %d bytes: %s", len, rx_buffer);
+
+            // send() can return less bytes than supplied length.
+            // Walk-around for robust implementation.
+            int to_write = len;
+            while (to_write > 0) {
+                int written = send(sock, rx_buffer + (len - to_write), to_write, 0);
+                if (written < 0) {
+                    ESP_LOGE(TAG, "Error occurred during sending: errno %d", errno);
+                    // Failed to retransmit, giving up
+                    return;
+                }
+                to_write -= written;
+            }
+        }
+    } while (len > 0);
+}
 
 //TCP client task
 void net_send_task()
@@ -135,6 +165,40 @@ void net_rcv_task(void *args)
         goto CLEAN_UP;
     }
     ESP_LOGI(NET_TAG, "<Socket bound to port %d>", SERVER_PORT);
+
+    err = listen(listen_sock, 1);
+
+    while (1) {
+
+        ESP_LOGI(TAG, "Socket listening");
+
+        struct sockaddr_storage source_addr; // Large enough for both IPv4 or IPv6
+        socklen_t addr_len = sizeof(source_addr);
+        int sock = accept(listen_sock, (struct sockaddr *)&source_addr, &addr_len);
+        if (sock < 0) {
+            ESP_LOGE(TAG, "Unable to accept connection: errno %d", errno);
+            break;
+        }
+
+        // Set tcp keepalive option
+        setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, &keep_alive, sizeof(int));
+        setsockopt(sock, IPPROTO_TCP, TCP_KEEPIDLE, &keep_idle, sizeof(int));
+        setsockopt(sock, IPPROTO_TCP, TCP_KEEPINTVL, &keep_interval, sizeof(int));
+        setsockopt(sock, IPPROTO_TCP, TCP_KEEPCNT, &keep_count, sizeof(int));
+        // Convert ip address to string
+
+        if (source_addr.ss_family == PF_INET)
+        {
+            inet_ntoa_r(((struct sockaddr_in *)&source_addr)->sin_addr, addr_str, sizeof(addr_str) - 1);
+        }
+
+        ESP_LOGI(TAG, "Socket accepted ip address: %s", addr_str);
+
+        do_retransmit(sock);
+
+        shutdown(sock, 0);
+        close(sock);
+    }
 
     CLEAN_UP:
         close(listen_sock);
@@ -255,12 +319,12 @@ esp_err_t esp_mesh_comm_p2p_start(void)
 
         if(mesh_send_t_handle == NULL)
         {
-            xTaskCreatePinnedToCore(send_mesh_p2p_task, "mesh_p2p_tx_task", 5120, NULL, 5, mesh_send_t_handle, 0);
+            xTaskCreatePinnedToCore(send_mesh_p2p_task, "mesh_p2p_tx_task", 2048, NULL, 5, mesh_send_t_handle, 0);
         }
 
         if(mesh_rcv_t_handle == NULL)
         {
-            xTaskCreatePinnedToCore(rcv_mesh_p2p_task, "mesh_p2p_rx_task", 5120, NULL, 5, mesh_rcv_t_handle, 0);
+            xTaskCreatePinnedToCore(rcv_mesh_p2p_task, "mesh_p2p_rx_task", 2048, NULL, 5, mesh_rcv_t_handle, 0);
         }
     }
     return ESP_OK;
@@ -358,7 +422,7 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id
             gpio_set_level(2,1); //Turn-on LED if it is the root
 
             //xTaskCreatePinnedToCore(net_send_task, "NET_SEND", 5120, NULL, configMAX_PRIORITIES - 1, net_send_t_handle, 0);
-            //xTaskCreatePinnedToCore(net_rcv_task, "NET_RECEIVE", 5120, NULL, configMAX_PRIORITIES - 1, net_rcv_t_handle, 0);
+            xTaskCreatePinnedToCore(net_rcv_task, "NET_RECEIVE", 5120, NULL, configMAX_PRIORITIES - 1, net_rcv_t_handle, 0);
         }
         esp_mesh_comm_p2p_start();
     }
@@ -372,10 +436,10 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id
          //mesh_disconnected_indicator(); //LED RGB, setava uma cor de alerta pra dizer que nao esta conectado ao pai, logo nao esta em nenhuma camada.
         mesh_layer = esp_mesh_get_layer();
 
-        if(net_send_t_handle != NULL)
-        {
-            vTaskDelete(net_send_t_handle);
-        }
+        // if(net_send_t_handle != NULL)
+        // {
+        //     vTaskDelete(net_send_t_handle);
+        // }
 
         if(net_rcv_t_handle != NULL)
         {
